@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="lmcache",
-    version="0.1.2",
+    version="0.1.3",
     description="LMCache: prefill your long contexts only once",
     author="LMCache team",
     author_email="lmcacheteam@gmail.com",
@@ -16,6 +16,7 @@ setup(
         "redis",
         "nvtx",
         "safetensors",
+        "transformers",
         "torchac_cuda >= 0.2.5",
     ],
     classifiers=[

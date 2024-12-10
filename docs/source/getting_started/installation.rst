@@ -1,8 +1,8 @@
 
 .. _installation:
 
-Installation
-============
+Pip Installation
+==================
 
 LMCache is a Python library that also contains pre-compiled C++ and CUDA (12.1) binaries.
 
@@ -34,7 +34,7 @@ You can install LMCache using pip:
 
 .. note::
 
-    LMCache provides the integration to the latest vLLM (0.6.1.post2)
+    LMCache provides the integration to the latest vLLM (0.6.2)
 
 .. note::
     LMCache requires CUDA 12.1. You can check ``nvcc --version`` to see if you loaded CUDA 12. Following, please add the following to your ``~/.bashrc`` file:
@@ -53,8 +53,8 @@ You can install the latest code from the GitHub repository:
 
 .. code-block:: console
 
-    # Install vLLM==0.6.1.post2
-    $ pip install vllm==0.6.1.post2
+    # Install vLLM==0.6.2
+    $ pip install vllm==0.6.2
 
     # Clone and install LMCache
     $ git clone git@github.com:LMCache/LMCache.git
@@ -67,6 +67,29 @@ You can install the latest code from the GitHub repository:
     $ cd lmcache-vllm
     $ pip install -e .
     $ cd ..
+
+Quickstart
+----------
+
+LMCache has the same interface as vLLM (both online serving and offline inference). 
+To use the online serving, you can start an OpenAI API-compatible vLLM server with LMCache via:
+
+.. code-block:: console
+
+    $ lmcache_vllm serve lmsys/longchat-7b-16k --gpu-memory-utilization 0.8
+
+To use vLLM's offline inference with LMCache, just simply add ``lmcache_vllm`` before the import to the vLLM components. For example
+
+.. code-block:: python
+
+    import lmcache_vllm.vllm as vllm
+    from lmcache_vllm.vllm import LLM 
+
+    # Load the model
+    model = LLM.from_pretrained("lmsys/longchat-7b-16k")
+
+    # Use the model
+    model.generate("Hello, my name is", max_length=100)
 
 
 
