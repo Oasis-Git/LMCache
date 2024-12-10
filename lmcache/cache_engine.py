@@ -8,6 +8,7 @@ import torch
 from lmcache.config import LMCacheEngineConfig, LMCacheEngineMetadata
 from lmcache.logging import init_logger
 from lmcache.storage_backend import CreateStorageBackend
+from lmcache.usage_tracker import Tracker
 from lmcache.utils import CacheEngineKey, KVCache, _lmcache_nvtx_annotate
 
 logger = init_logger(__name__)
@@ -19,6 +20,7 @@ class LMCacheEngine:
         self,
         config: LMCacheEngineConfig,
         metadata: LMCacheEngineMetadata,
+        tracker: bool = True,
     ):
         """
         raises: RuntimeError if the loaded configuration does not 
@@ -36,6 +38,11 @@ class LMCacheEngine:
 
         self.engine_ = CreateStorageBackend(config, metadata)
         logger.debug(f"Current storage backend type {type(self.engine_)}")
+
+        if tracker:
+            # TODO: Server connection
+            self.tracker = Tracker(None, None, config, metadata,
+                                   '/home/yuweia/LMCache/try/tracker.log')
 
     def _make_key(self, chunk_hash: str, fmt: str) -> CacheEngineKey:
         return CacheEngineKey(
