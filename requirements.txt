@@ -5,4 +5,5 @@ redis
 nvtx
 safetensors
 transformers
+psutil
 torchac_cuda>=0.2.5
