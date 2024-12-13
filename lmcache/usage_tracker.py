@@ -11,9 +11,9 @@ import pkg_resources
 import psutil
 import requests
 import torch
-from vllm.connections import global_http_connection
 
 from lmcache.config import LMCacheEngineConfig, LMCacheEngineMetadata
+from lmcache.connections import global_http_connection
 from lmcache.logging import init_logger
 
 logger = init_logger(__name__)
