@@ -1,7 +1,7 @@
 # This file is copied from the vLLM project (https://github.com/vllm-project/vllm).
 # Original source file: [vllm/vllm/connections.py]
 # License: [Apache License 2.0]
-# Modifications: None
+# Modifications: header name
 
 from pathlib import Path
 from typing import Mapping, MutableMapping, Optional
@@ -9,8 +9,6 @@ from urllib.parse import urlparse
 
 import aiohttp
 import requests
-
-from vllm.version import __version__ as VLLM_VERSION
 
 
 class HTTPConnection:
@@ -46,7 +44,7 @@ class HTTPConnection:
                              "must have scheme 'http' or 'https'.")
 
     def _headers(self, **extras: str) -> MutableMapping[str, str]:
-        return {"User-Agent": f"vLLM/{VLLM_VERSION}", **extras}
+        return {"User-Agent": "LMCache", **extras}
 
     def get_response(
         self,
