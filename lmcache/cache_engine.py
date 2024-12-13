@@ -40,9 +40,10 @@ class LMCacheEngine:
         logger.debug(f"Current storage backend type {type(self.engine_)}")
 
         if tracker:
-            # TODO: Server connection
-            self.tracker = Tracker(None, None, config, metadata,
-                                   '/home/yuweia/LMCache/try/tracker.log')
+            # TODO: Two main hyperparameters read from the config:
+            # the server url and local log path
+            self.tracker = Tracker(None, config, metadata,
+                                   '/tmp/usage_tracker.log')
 
     def _make_key(self, chunk_hash: str, fmt: str) -> CacheEngineKey:
         return CacheEngineKey(

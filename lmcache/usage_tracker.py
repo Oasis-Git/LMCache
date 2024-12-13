@@ -1,23 +1,29 @@
 import os
+import platform
+import subprocess
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
-import psutil
+
 import cpuinfo
-import platform
-import torch
-import threading
 import pkg_resources
-import subprocess
+import psutil
+import requests
+import torch
+from vllm.connections import global_http_connection
 
 from lmcache.config import LMCacheEngineConfig, LMCacheEngineMetadata
 from lmcache.logging import init_logger
 
 logger = init_logger(__name__)
 
+
 class EnvMessage:
-    def __init__(self, provider, num_cpu, cpu_type, cpu_family_model_stepping, 
-                total_memory,  architecture, platforms, gpu_count, gpu_type, gpu_memory_per_device, source):
+
+    def __init__(self, provider, num_cpu, cpu_type, cpu_family_model_stepping,
+                 total_memory, architecture, platforms, gpu_count, gpu_type,
+                 gpu_memory_per_device, source):
         self.provider = provider
         self.num_cpu = num_cpu
         self.cpu_type = cpu_type
@@ -29,9 +35,12 @@ class EnvMessage:
         self.gpu_type = gpu_type
         self.gpu_memory_per_device = gpu_memory_per_device
         self.source = source
-        
+
+
 class EngineMessage:
-    def __init__(self, config: LMCacheEngineConfig, metadata: LMCacheEngineMetadata):
+
+    def __init__(self, config: LMCacheEngineConfig,
+                 metadata: LMCacheEngineMetadata):
         self.chunksize = config.chunk_size
         self.local_device = config.local_device
         self.max_local_cache_size = config.max_local_cache_size
@@ -49,72 +58,74 @@ class EngineMessage:
         self.kv_dtype = metadata.kv_dtype
         self.kv_shape = metadata.kv_shape
 
+
 class MetadataMessage:
+
     def __init__(self, start_time, duruation):
         self.start_time = start_time
         self.duraion = duruation
-        
+
+
 class Tracker:
-    def __init__(self, server_host, server_port, config: LMCacheEngineConfig, metadata: LMCacheEngineMetadata, local_log):
+
+    def __init__(self, server_url, config: LMCacheEngineConfig,
+                 metadata: LMCacheEngineMetadata, local_log):
         logger.info("Tracker initialized")
-        self.server_host = server_host
-        self.server_port = server_port
+        self.server_url = server_url
         self.config = config
         self.metadata = metadata
         self.start_time = datetime.now()
-        self.server_connection = False
         self.local_log = local_log
-        
-        # TODO: Server connection
-        
+
         self.send_env_message()
         self.send_engine_message()
         t = threading.Thread(target=self.send_metadata_message)
         t.start()
-        
+
     def dynamic_tracker(self):
         while True:
             time.sleep(120)
             self.send_metadata_message()
-        
-    def connect_server(self):
-        pass
-    
+
     def send_message_server(self, msg, message_type):
-        pass
-    
+        msg.message_type = message_type
+        try:
+            global_http_client = global_http_connection.get_sync_client()
+            data = dict()
+            for key, value in msg.__dict__.items():
+                data[key] = value
+            if self.server_url is not None:
+                global_http_client.post(self.server_url, json=data)
+        except requests.exceptions.RequestException:
+            logger.debug("Failed to send usage data to server")
+
     def send_message_local(self, msg, message_type):
-        message = '[{}] \n'.format(message_type)
+        msg.message_type = message_type
+        message = ''
         for key, value in msg.__dict__.items():
             message += '{}: {}\n'.format(key, value)
         message += '\n'
         with open(self.local_log, 'a') as f:
             f.write(message)
-        
+
     def send_env_message(self):
         env_message = self.track_env()
-        if self.server_connection:
-            self.send_message_server(env_message, 'EnvMessage')
-        else:
-            self.send_message_local(env_message, 'EnvMessage')
-        logger.info(f"Env message tracked")
-        
+        self.send_message_server(env_message, 'EnvMessage')
+        self.send_message_local(env_message, 'EnvMessage')
+        logger.info("Env message tracked")
+
     def send_engine_message(self):
         engine_message = self.track_engine()
-        if self.server_connection:
-            self.send_message_server(engine_message, 'EngineMessage')
-        else:
-            self.send_message_local(engine_message, 'EngineMessage')
-        logger.info(f"Engine message tracked")
-        
+        self.send_message_server(engine_message, 'EngineMessage')
+        self.send_message_local(engine_message, 'EngineMessage')
+        logger.info("Engine message tracked")
+
     def send_metadata_message(self):
         metadata_message = self.track_metadata()
-        if self.server_connection:
-            self.send_message_server(metadata_message, 'MetadataMessage')
-        else:
-            self.send_message_local(metadata_message, 'MetadataMessage')
-        logger.info(f"Metadata message tracked")
-        
+        self.send_message_server(metadata_message, 'MetadataMessage')
+        self.send_message_local(metadata_message, 'MetadataMessage')
+        logger.info("Metadata message tracked")
+
     def track_env(self):
         provider = self._get_provider()
         num_cpu, cpu_type, cpu_family_model_stepping = self._get_cpu_info()
@@ -123,10 +134,12 @@ class Tracker:
         platforms = platform.platform()
         gpu_count, gpu_type, gpu_memory_per_device = self._get_gpu_info()
         source = self._get_source()
-        env_message = EnvMessage(provider, num_cpu, cpu_type, cpu_family_model_stepping, 
-                                 total_memory, architecture, platforms, gpu_count, gpu_type, gpu_memory_per_device, source)
+        env_message = EnvMessage(provider, num_cpu, cpu_type,
+                                 cpu_family_model_stepping, total_memory,
+                                 architecture, platforms, gpu_count, gpu_type,
+                                 gpu_memory_per_device, source)
         return env_message
-    
+
     def track_engine(self):
         engine_message = EngineMessage(self.config, self.metadata)
         return engine_message
@@ -136,12 +149,13 @@ class Tracker:
         interval = datetime.now() - self.start_time
         duration = interval.total_seconds()
         return MetadataMessage(start_time, duration)
-    
+
     def _get_provider(self):
         vendor_files = [
-            "/sys/class/dmi/id/product_version", "/sys/class/dmi/id/bios_vendor",
-            "/sys/class/dmi/id/product_name",
-            "/sys/class/dmi/id/chassis_asset_tag", "/sys/class/dmi/id/sys_vendor"
+            "/sys/class/dmi/id/product_version",
+            "/sys/class/dmi/id/bios_vendor", "/sys/class/dmi/id/product_name",
+            "/sys/class/dmi/id/chassis_asset_tag",
+            "/sys/class/dmi/id/sys_vendor"
         ]
         # Mapping of identifiable strings to cloud providers
         cloud_identifiers = {
@@ -168,7 +182,7 @@ class Tracker:
                 return provider
 
         return "UNKNOWN"
-    
+
     def _get_cpu_info(self):
         info = cpuinfo.get_cpu_info()
         num_cpu = info.get("count", None)
@@ -179,14 +193,14 @@ class Tracker:
             str(info.get("stepping", ""))
         ])
         return num_cpu, cpu_type, cpu_family_model_stepping
-        
+
     def _get_gpu_info(self):
         device_property = torch.cuda.get_device_properties(0)
         gpu_count = torch.cuda.device_count()
         gpu_type = device_property.name
         gpu_memory_per_device = device_property.total_memory
         return gpu_count, gpu_type, gpu_memory_per_device
-    
+
     def _get_source(self):
         path = '/proc/1/cgroup'
         if os.path.exists(path):
@@ -195,15 +209,17 @@ class Tracker:
                     if 'docker' in line:
                         return 'DOCKER'
         try:
-            pkg = pkg_resources.get_distribution('LMCache')
+            _ = pkg_resources.get_distribution('LMCache')
             return 'PIP'
         except pkg_resources.DistributionNotFound:
             pass
         try:
-            result = subprocess.run(["conda", "list", 'LMCache'], capture_output=True, text=True)
+            result = subprocess.run(["conda", "list", 'LMCache'],
+                                    capture_output=True,
+                                    text=True)
             if 'LMCache' in result.stdout:
                 return "CONDA"
         except FileNotFoundError:
             pass
-        
+
         return 'UNKNOWN'
