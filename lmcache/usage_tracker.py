@@ -69,7 +69,7 @@ class MetadataMessage:
 class Tracker:
 
     def __init__(self, server_url, config: LMCacheEngineConfig,
-                 metadata: LMCacheEngineMetadata, local_log):
+                 metadata: LMCacheEngineMetadata, local_log: str=None):
         logger.info("Tracker initialized")
         self.server_url = server_url
         self.config = config
@@ -100,6 +100,8 @@ class Tracker:
             logger.debug("Failed to send usage data to server")
 
     def send_message_local(self, msg, message_type):
+        if self.local_log is None:
+            return
         msg.message_type = message_type
         message = ''
         for key, value in msg.__dict__.items():
