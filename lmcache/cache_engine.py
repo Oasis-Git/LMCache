@@ -1,11 +1,11 @@
 import hashlib
 import logging
-import time
+import time, os
 from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 import torch
 
-from lmcache.config import LMCacheEngineConfig, LMCacheEngineMetadata
+from lmcache.config import LMCacheEngineConfig, LMCacheEngineMetadata, UsageConfig
 from lmcache.logging import init_logger
 from lmcache.storage_backend import CreateStorageBackend
 from lmcache.usage_tracker import Tracker
@@ -13,6 +13,11 @@ from lmcache.utils import CacheEngineKey, KVCache, _lmcache_nvtx_annotate
 
 logger = init_logger(__name__)
 
+if os.getenv("TRACK_USAGE") == "false":
+    logger.info("Usage tracking is disabled.")
+    UsageConfig.track = False
+else:
+    logger.info("Usage tracking is enabled.")
 
 class LMCacheEngine:
 
@@ -20,7 +25,7 @@ class LMCacheEngine:
         self,
         config: LMCacheEngineConfig,
         metadata: LMCacheEngineMetadata,
-        tracker: bool = True,
+        tracker: bool = UsageConfig.track,
     ):
         """
         raises: RuntimeError if the loaded configuration does not 
@@ -43,7 +48,8 @@ class LMCacheEngine:
             # TODO: Two main hyperparameters read from the config:
             # the server url and local log path
             # If you want to write the log locally, set the local_log to the path you want
-            self.tracker = Tracker('http://34.236.19.149:8080/endpoint', config, metadata, None)
+            self.url = UsageConfig.url
+            self.tracker = Tracker(self.url, config, metadata, None)
 
     def _make_key(self, chunk_hash: str, fmt: str) -> CacheEngineKey:
         return CacheEngineKey(
