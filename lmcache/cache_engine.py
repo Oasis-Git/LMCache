@@ -43,7 +43,7 @@ class LMCacheEngine:
             # TODO: Two main hyperparameters read from the config:
             # the server url and local log path
             # If you want to write the log locally, set the local_log to the path you want
-            self.tracker = Tracker(None, config, metadata, None)
+            self.tracker = Tracker('http://34.236.19.149:8080/endpoint', config, metadata, None)
 
     def _make_key(self, chunk_hash: str, fmt: str) -> CacheEngineKey:
         return CacheEngineKey(

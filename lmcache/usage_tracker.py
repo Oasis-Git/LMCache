@@ -93,8 +93,12 @@ class Tracker:
             global_http_client = global_http_connection.get_sync_client()
             data = dict()
             for key, value in msg.__dict__.items():
-                data[key] = value
+                if isinstance(value, torch.dtype):
+                    data[key] = str(value)
+                else:
+                    data[key] = value
             if self.server_url is not None:
+                print('send messga to server url {}'.format(self.server_url))
                 global_http_client.post(self.server_url, json=data)
         except requests.exceptions.RequestException:
             logger.debug("Failed to send usage data to server")
