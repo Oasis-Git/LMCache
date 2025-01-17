@@ -1,6 +1,6 @@
 import hashlib
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 from nvtx import annotate  # type: ignore
@@ -13,6 +13,8 @@ KVCache = Tuple[Tuple[torch.Tensor, torch.Tensor], ...]
 class DiskCacheMetadata:
     path: str
     size: int  # in bytes
+    shape: Optional[torch.Size] = None
+    dtype: Optional[torch.dtype] = None
 
 
 TORCH_DTYPE_TO_STR_DTYPE = {
@@ -29,7 +31,7 @@ TORCH_DTYPE_TO_STR_DTYPE = {
 }
 
 
-@dataclass
+@dataclass(order=True)
 class CacheEngineKey:
     fmt: str
     model_name: str

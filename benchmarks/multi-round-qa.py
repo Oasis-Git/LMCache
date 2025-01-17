@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -35,6 +36,9 @@ class WorkloadConfig:
     # Model name
     model: str
 
+    # Whether to include user id in request header
+    enable_user_id: bool
+
 
 @dataclass
 class UserConfig:
@@ -56,6 +60,9 @@ class UserConfig:
     # Num rounds
     num_rounds: int
 
+    # Whether to include user id in request header
+    enable_user_id: bool
+
     @staticmethod
     def new_user_config(user_id: int,
                         workload_config: WorkloadConfig) -> 'UserConfig':
@@ -65,7 +72,8 @@ class UserConfig:
                           answer_len=workload_config.answer_len,
                           gap_between_requests=workload_config.num_users /
                           workload_config.qps,
-                          num_rounds=workload_config.num_rounds)
+                          num_rounds=workload_config.num_rounds,
+                          enable_user_id=workload_config.enable_user_id)
 
 
 class ChatHistory:
@@ -112,7 +120,10 @@ class RequestExecutor:
         self.loop = AsyncLoopWrapper.GetOrStartLoop()
         self.request_history = []
 
-    async def _async_launch_request(self, messages, max_tokens):
+    async def _async_launch_request(self,
+                                    messages,
+                                    max_tokens,
+                                    extra_headers=None):
         start_time = time.time()
         first_token_time = None
         words = ""
@@ -123,7 +134,8 @@ class RequestExecutor:
             temperature=0,
             stream=True,
             max_tokens=max_tokens,
-            stream_options={"include_usage": True})
+            stream_options={"include_usage": True},
+            extra_headers=extra_headers)
 
         async for tok in response:
             if not tok.choices:
@@ -144,27 +156,42 @@ class RequestExecutor:
                         launch_time=start_time,
                         finish_time=time.time())
 
-    def launch_request(self, chat_history: ChatHistory, max_tokens: int,
-                       finish_callback):
+    def launch_request(self,
+                       chat_history: ChatHistory,
+                       max_tokens: int,
+                       finish_callback,
+                       extra_headers=None):
         """
         finish_callback: Callable[[Response], None]
         """
         messages = chat_history.get_messages_for_openai()
         real_callback = lambda x: finish_callback(x.result())
         future = asyncio.run_coroutine_threadsafe(
-            self._async_launch_request(messages, max_tokens), self.loop)
+            self._async_launch_request(messages, max_tokens, extra_headers),
+            self.loop)
         future.add_done_callback(real_callback)
 
 
 class UserSession:
 
-    def __init__(self, user_config: UserConfig):
+    def __init__(self,
+                 user_config: UserConfig,
+                 use_sharegpt=False,
+                 sharegpt_data=None):
         self.user_config = user_config
         self.last_request_time = None
         self.chat_history = ChatHistory()
         self.question_id = 0
+        self.use_sharegpt = use_sharegpt
+        if self.use_sharegpt:
+            self.sharegpt_data = sharegpt_data
+            if self.sharegpt_data['num_round'] % 2 == 0:
+                self.start_with_gpt = False
+            else:
+                self.start_with_gpt = True
 
         self.has_unfinished_request = False
+        self.last_unfinished_log = 0
 
         self.prompt_lengths = []
         self.generation_lengths = []
@@ -202,16 +229,38 @@ class UserSession:
 
     def _launch_new_request(self, timestamp: float,
                             request_executor: RequestExecutor):
-        prompt = self._build_new_question()
+        if self.use_sharegpt:
+            if self.start_with_gpt:
+                prompt = self.sharegpt_data['conversations'][2 *
+                                                             self.question_id +
+                                                             1]['value']
+            else:
+                prompt = self.sharegpt_data['conversations'][
+                    2 * self.question_id]['value']
+            self.question_id += 1
+        else:
+            prompt = self._build_new_question()
         if len(self.chat_history) == 0:
             prompt = self._build_system_prompt() + prompt
         self.chat_history.on_user_query(prompt)
         logger.debug(
             f"User {self.user_config.user_id} issues request {self.question_id}"
         )
-        request_executor.launch_request(self.chat_history,
-                                        self.user_config.answer_len,
-                                        self._on_request_finished)
+        if self.use_sharegpt:
+            if self.start_with_gpt:
+                max_tokens = self.sharegpt_data['conversations'][
+                    2 * self.question_id]['num_tokens']
+            else:
+                max_tokens = self.sharegpt_data['conversations'][
+                    2 * self.question_id - 1]['num_tokens']
+            max_tokens = min(max_tokens, self.user_config.answer_len)
+        else:
+            max_tokens = self.user_config.answer_len
+        request_executor.launch_request(
+            self.chat_history,
+            max_tokens,
+            self._on_request_finished,
+            extra_headers={"x-user-id": str(self.user_config.user_id)})
         self.has_unfinished_request = True
         self.last_request_time = timestamp
 
@@ -242,7 +291,8 @@ class UserSession:
             f"last_request_time: {self.last_request_time}")
 
     def step(self, timestamp: float, request_executor: RequestExecutor):
-        if self.question_id >= self.user_config.num_rounds:
+        if self.question_id >= self.user_config.num_rounds \
+            and not self.has_unfinished_request:
             self.finished = True
             return
 
@@ -253,9 +303,11 @@ class UserSession:
         if timestamp - self.last_request_time > \
                 self.user_config.gap_between_requests:
             if self.has_unfinished_request:
-                logger.warning(
-                    f"User {self.user_config.user_id} has an unfinished "
-                    "request and unable to fit the QPS requirement.")
+                if timestamp - self.last_unfinished_log > 10:
+                    logger.warning(
+                        f"User {self.user_config.user_id} has an unfinished "
+                        "request and unable to fit the QPS requirement.")
+                    self.last_unfinished_log = timestamp
                 return
 
             self._launch_new_request(timestamp, request_executor)
@@ -276,7 +328,10 @@ class UserSession:
 
 class UserSessionManager:
 
-    def __init__(self, workload_config: WorkloadConfig):
+    def __init__(self,
+                 workload_config: WorkloadConfig,
+                 init_user_id=0,
+                 use_sharegpt=False):
         self.workload_config = workload_config
         self.sessions = []
 
@@ -293,12 +348,25 @@ class UserSessionManager:
             f"Gap between user reqs: {gap_between_requests_per_user} secs.\n"
             f"Expected length of user session: {session_alive_time} secs.")
 
-        self.user_id = 0
+        self.user_id = init_user_id
         self.last_user_join = 0
         self.session_summaries = []
         self.start_time = None
 
         self.need_ramp_up = True
+
+        self.use_sharegpt = use_sharegpt
+        if self.use_sharegpt:
+            self._load_sharegpt_data()
+
+    def _load_sharegpt_data(self):
+        with open('ShareGPT.json', 'r', encoding='utf-8') as file:
+            self.sharegpt_data = json.load(file)
+        self.sharegpt_data = [
+            d for d in self.sharegpt_data
+            if d['num_round'] > 2 * self.workload_config.num_rounds
+        ]
+        logger.info(f"There are {len(self.sharegpt_data)} users satisfying ")
 
     def _ramp_up(self, timestamp: float, ramp_up_time: float):
         for i in range(self.workload_config.num_users):
@@ -313,7 +381,11 @@ class UserSessionManager:
         self.user_id += 1
         user_config = UserConfig.new_user_config(self.user_id,
                                                  self.workload_config)
-        user_session = UserSession(user_config)
+        if self.use_sharegpt:
+            user_session = UserSession(user_config, self.use_sharegpt,
+                                       self.sharegpt_data[self.user_id])
+        else:
+            user_session = UserSession(user_config, self.use_sharegpt)
         self.sessions.append(user_session)
         return user_session
 
@@ -338,8 +410,8 @@ class UserSessionManager:
         if timestamp - self.last_user_join > self.gap_between_users:
             self._create_user_session()
             self.last_user_join = timestamp
-            logger.info(
-                f"Joined a new user, now active users: {len(self.sessions)}")
+            logger.info(f"Joined a new user {self.user_id}, "
+                        f"now active users: {len(self.sessions)}")
 
         for session in self.sessions:
             session.step(timestamp, executor)
@@ -484,6 +556,14 @@ def parse_arguments() -> WorkloadConfig:
                         default="summary.csv",
                         help="The output file name (ended with csv or txt) "
                         "for the summary csv and txt")
+    parser.add_argument("--init-user-id",
+                        type=int,
+                        default=0,
+                        help="The initial user id to start with")
+    parser.add_argument(
+        "--request-with-user-id",
+        action="store_true",
+        help="Whether to enable user id in the request headers")
     parser.add_argument(
         "--log-interval",
         type=int,
@@ -493,7 +573,9 @@ def parse_arguments() -> WorkloadConfig:
     parser.add_argument("--verbose",
                         action="store_true",
                         help="Whether to enable verbose logging")
-
+    parser.add_argument("--sharegpt",
+                        action="store_true",
+                        help="Whether to use ShareGPT dataset")
     args = parser.parse_args()
     return args
 
@@ -539,9 +621,12 @@ def main():
         answer_len=args.answer_len,
         num_rounds=args.num_rounds,
         qps=args.qps,
-        model=args.model)
+        model=args.model,
+        enable_user_id=args.request_with_user_id)
 
-    manager = UserSessionManager(workload_config)
+    manager = UserSessionManager(workload_config,
+                                 init_user_id=args.init_user_id,
+                                 use_sharegpt=args.sharegpt)
 
     num_steps = 0
     start_time = time.time()

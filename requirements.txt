@@ -1,5 +1,6 @@
 torch>=2.2.0
 numpy==1.26.4
+aiofiles
 pyyaml
 redis
 nvtx
@@ -8,3 +9,4 @@ transformers
 psutil
 aiohttp
 torchac_cuda>=0.2.5
+sortedcontainers
